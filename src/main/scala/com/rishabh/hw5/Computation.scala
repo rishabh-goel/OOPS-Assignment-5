@@ -17,7 +17,7 @@ object Computation:
   val instance = new Computation()
 
   // private variable created to store and return the output of many exceptions being thrown
-  private var output: BasicType = null
+  private var output: BasicType = _
 
   import SetExp.*
 
@@ -50,6 +50,22 @@ object Computation:
 
   // Map to store interfaces
   val dataStructureList: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map("class" -> scala.collection.mutable.ListBuffer(), "interface" -> scala.collection.mutable.ListBuffer(), "abstract_class" -> scala.collection.mutable.ListBuffer(), "exception_class" -> scala.collection.mutable.ListBuffer())
+
+  val partialVarList: scala.collection.mutable.ListBuffer[BasicType] = scala.collection.mutable.ListBuffer()
+
+  // Trait to define the definition of our map function
+  trait Monads:
+    def map(f: SetExp => BasicType) : BasicType
+
+  // Case class to override the existing map function.
+  // It takes function as an input and the class has SetExp as the input
+  case class MonadsOptimize(input: SetExp) extends Monads {
+    @Override
+    def map(func: SetExp => BasicType) = {
+      func(input)
+    }
+  }
+
 
   enum SetExp:
     case Value(input: BasicType) // Get the value of the element passed
@@ -86,8 +102,7 @@ object Computation:
     case ThrowException(className: SetExp, excpMsg: String) // Construct to throw an exception
     case CatchException(className: SetExp) // Construct to catch the thrown exception
     case ExceptionClassDef(className: String, excpVar: SetExp*) // Exception class
-    case Map(input: SetExp, tempVar: SetExp, op: SetExp*) //Monadic function
-    case Multiplier(input: SetExp, multiplier: BasicType)
+    case PartialResult(result: BasicType) // Partial evaluation
 
 
     // Method to find the name of the class/abstract class/interface
@@ -128,19 +143,17 @@ object Computation:
           m.asInstanceOf[String] match {
             case "class" => "class"
             case "abstract_class" => "abstract_class"
-            case "interface" => {
+            case "interface" =>
               ExceptionClassDef("InterfaceInvalidTypeException", Field("InterfaceTypeReason")).eval()
               ThrowException(ExceptionClassDef("InterfaceInvalidTypeException"), "Only a class/abstract_class can implement an interface").eval()
               CatchException(ExceptionClassDef("InterfaceInvalidTypeException")).eval()
-            }
           }
 
-        case None => {
+        case None =>
           // Using our own language's Try-Catch instead of Scala's try-catch
           ExceptionClassDef("InvalidTypeException", Field("InvalidTypeReason")).eval()
           ThrowException(ExceptionClassDef("InvalidTypeException"), "Invalid type").eval()
           CatchException(ExceptionClassDef("InvalidTypeException")).eval()
-        }
       }
 
       // Identify the type of parent reference being used
@@ -148,20 +161,18 @@ object Computation:
         case Some(m) =>
           m.asInstanceOf[String] match {
             case "interface" => "interface"
-            case _ => {
+            case _ =>
               // Using our own language's Try-Catch instead of Scala's try-catch
               ExceptionClassDef("ClassInvalidTypeException", Field("ClassTypeReason")).eval()
               ThrowException(ExceptionClassDef("ClassInvalidTypeException"), "A class can't be implemented. It can only be extended").eval()
               CatchException(ExceptionClassDef("ClassInvalidTypeException")).eval()
-            }
           }
 
-        case None => {
+        case None =>
           // Using our own language's Try-Catch instead of Scala's try-catch
           ExceptionClassDef("InvalidTypeException", Field("InvalidTypeReason")).eval()
           ThrowException(ExceptionClassDef("InvalidTypeException"), "Invalid type").eval()
           CatchException(ExceptionClassDef("InvalidTypeException")).eval()
-        }
       }
 
       // Identify the methods present in both parent and child
@@ -212,7 +223,7 @@ object Computation:
         scopeMap += (childName -> map)
       }
       else {
-        // Check which exception has been caught and return the error message 
+        // Check which exception has been caught and return the error message
         // Fetching the output and removing the error message from the scope so it is not used by any other execution statement
         if(Variable("msgInterfaceInvalidTypeException").eval() != "msgInterfaceInvalidTypeException")
         {
@@ -298,12 +309,11 @@ object Computation:
               case "interface" => "interface"
             }
 
-          case None => {
+          case None =>
             // Using our own language's Try-Catch instead of Scala's try-catch
             ExceptionClassDef("InvalidTypeException", Field("InvalidTypeReason")).eval()
             ThrowException(ExceptionClassDef("InvalidTypeException"), "Invalid type").eval()
             CatchException(ExceptionClassDef("InvalidTypeException")).eval()
-          }
         }
 
         // Identify the type of parent reference that will be extended
@@ -315,12 +325,11 @@ object Computation:
               case "interface" => "interface"
             }
 
-          case None => {
+          case None =>
             // Using our own language's Try-Catch instead of Scala's try-catch
             ExceptionClassDef("InvalidTypeException", Field("InvalidTypeReason")).eval()
             ThrowException(ExceptionClassDef("InvalidTypeException"), "Invalid type").eval()
             CatchException(ExceptionClassDef("InvalidTypeException")).eval()
-          }
         }
 
 
@@ -382,7 +391,7 @@ object Computation:
             // Get updated maps for the child
             val newpublicChildMap = getNewModifiers("public", parentName, childName)
             val newprotectedChildMap = getNewModifiers("protected", parentName, childName)
-            
+
             // Update the access modifiers for child class after inheriting from the parent class
             accessMap.update("public", accessMap("public").asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]] += (childName -> newpublicChildMap))
             accessMap.update("protected", accessMap("protected").asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]] += (childName -> newprotectedChildMap))
@@ -582,11 +591,17 @@ object Computation:
         }
       }
 
+
       this match {
 
         case Params(params*) =>
           // Return the list of formal parameters for Methods and Constructors
           params
+
+        case PartialResult(result) =>
+          // add partial result to the Partial Variable List
+          partialVarList.addOne(result)
+          result
 
         case Value(i) => i
 
@@ -595,10 +610,18 @@ object Computation:
           if(instance.isExceptionThrown)
             return
 
+          // If partial variable list already contains Variable, remove it
+          if(partialVarList.contains(Variable(name)))
+            partialVarList -= Variable(name)
+
+          // If value is defined, return the result. Otherwise wrap it inside the PartialResult
           if(scope.contains(name))
-            scope(name)
+            if(scope(name).isInstanceOf[SetExp])
+              scope(name).asInstanceOf[SetExp].eval()
+            else
+              scope(name)
           else
-            Value(name).eval(scope)
+            PartialResult(Variable(name)).eval()
 
 
         case Check(set, item) =>
@@ -614,6 +637,7 @@ object Computation:
           // Check if exception has been thrown or not
           if(instance.isExceptionThrown)
             return
+
           scope += (name -> item.eval(scope))
 
 
@@ -626,12 +650,11 @@ object Computation:
 
           val keyName = scope.find(_._2 == key).map(_._1) match {
             case Some(m) => m.asInstanceOf[String]
-            case None => {
+            case None =>
               // Using our own language's Try-Catch instead of Scala's try-catch
               ExceptionClassDef("InvalidTypeException", Field("InvalidTypeReason")).eval(scope)
               ThrowException(ExceptionClassDef("InvalidTypeException"), "Invalid type").eval(scope)
               CatchException(ExceptionClassDef("InvalidTypeException")).eval(scope)
-            }
           }
 
           // Insert an item into set only when no exception has caught
@@ -656,12 +679,11 @@ object Computation:
 
           val keyName = scope.find(_._2 == key).map(_._1) match {
             case Some(m) => m.asInstanceOf[String]
-            case None => {
+            case None =>
               // Using our own language's Try-Catch instead of Scala's try-catch
               ExceptionClassDef("InvalidTypeException", Field("InvalidTypeReason")).eval(scope)
               ThrowException(ExceptionClassDef("InvalidTypeException"), "Invalid type").eval(scope)
               CatchException(ExceptionClassDef("InvalidTypeException")).eval(scope)
-            }
           }
 
           // Delete an item from set only if no exception has been caught
@@ -682,21 +704,74 @@ object Computation:
           if(instance.isExceptionThrown)
             return
 
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val result: scala.collection.mutable.Set[BasicType] = s1.union(s2)
-          result
+          val set1Eval = set1.eval(scope)
+          val set2Eval = set2.eval(scope)
 
+          // set1 and set2 values are present
+          if(!set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+            val s1: scala.collection.mutable.Set[BasicType] = set1Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s2: scala.collection.mutable.Set[BasicType] = set2Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val result: scala.collection.mutable.Set[BasicType] = s1.union(s2)
+            result
+          }
+          // set1 value is present but set2 is not
+          else if(!set1Eval.isInstanceOf[SetExp] && set2Eval.isInstanceOf[SetExp]) {
+             val s1: scala.collection.mutable.Set[BasicType] = set1Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+             val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+             val result: SetExp = Union(Value(s1), s2)
+             result
+          }
+          // set2 value is present but set1 is not
+          else if(set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+             val s2: scala.collection.mutable.Set[BasicType] = set2Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+             val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+             val result: SetExp = Union(s1, Value(s2))
+             result
+          }
+          // Both set1 and set2 values are not present
+          else {
+            val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+            val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+            val result: SetExp = Union(s1, s2)
+            result
+          }
 
         case Intersect(set1, set2) =>
           // Check if exception has been thrown or not
           if(instance.isExceptionThrown)
             return
 
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val result: scala.collection.mutable.Set[BasicType] = s1.intersect(s2)
-          result
+          val set1Eval = set1.eval(scope)
+          val set2Eval = set2.eval(scope)
+
+          // set1 and set2 values are present
+          if(!set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+            val s1: scala.collection.mutable.Set[BasicType] = set1Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s2: scala.collection.mutable.Set[BasicType] = set2Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val result: scala.collection.mutable.Set[BasicType] = s1.intersect(s2)
+            result
+          }
+          // set1 value is present but set2 is not
+          else if(!set1Eval.isInstanceOf[SetExp] && set2Eval.isInstanceOf[SetExp]) {
+            val s1: scala.collection.mutable.Set[BasicType] = set1Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+            val result: SetExp = Intersect(Value(s1), s2)
+            result
+          }
+          // set2 value is present but set1 is not
+          else if(set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+            val s2: scala.collection.mutable.Set[BasicType] = set2Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+            val result: SetExp = Intersect(s1, Value(s2))
+            result
+          }
+          // Both set1 and set2 values are not present
+          else {
+            val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+            val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+            val result: SetExp = Intersect(s1, s2)
+            result
+          }
 
 
         case Diff(set1, set2) =>
@@ -704,12 +779,39 @@ object Computation:
           if(instance.isExceptionThrown)
             return
 
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val list_concat: scala.collection.mutable.Set[BasicType] = s1.union(s2)
-          val list_intersect: scala.collection.mutable.Set[BasicType] = s1.intersect(s2)
-          val result = list_concat.diff(list_intersect)
-          result
+          val set1Eval = set1.eval(scope)
+          val set2Eval = set2.eval(scope)
+
+          // set1 and set2 values are present
+          if(!set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+            val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val list_concat: scala.collection.mutable.Set[BasicType] = s1.union(s2)
+            val list_intersect: scala.collection.mutable.Set[BasicType] = s1.intersect(s2)
+            val result = list_concat.diff(list_intersect)
+            result
+          }
+          // set1 value is present but set2 is not
+          else if(!set1Eval.isInstanceOf[SetExp] && set2Eval.isInstanceOf[SetExp]) {
+            val s1: scala.collection.mutable.Set[BasicType] = set1Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+            val result: SetExp = Diff(Value(s1), s2)
+            result
+          }
+          // set2 value is present but set1 is not
+          else if(set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+            val s2: scala.collection.mutable.Set[BasicType] = set2Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+            val result: SetExp = Diff(s1, Value(s2))
+            result
+          }
+          // Both set1 and set2 values are not present
+          else {
+            val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+            val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+            val result: SetExp = Diff(s1, s2)
+            result
+          }
 
 
         case Cross(set1, set2) =>
@@ -717,10 +819,37 @@ object Computation:
           if(instance.isExceptionThrown)
             return
 
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val result: scala.collection.mutable.Set[BasicType] = s1.flatMap(a => s2.map(b => (a, b)))
-          result
+          val set1Eval = set1.eval(scope)
+          val set2Eval = set2.eval(scope)
+
+          // set1 and set2 values are present
+          if(!set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+            val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val result: scala.collection.mutable.Set[BasicType] = s1.flatMap(a => s2.map(b => (a, b)))
+            result
+          }
+          // set1 value is present but set2 is not
+          else if(!set1Eval.isInstanceOf[SetExp] && set2Eval.isInstanceOf[SetExp]) {
+            val s1: scala.collection.mutable.Set[BasicType] = set1Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+            val result: SetExp = Cross(Value(s1), s2)
+            result
+          }
+          // set2 value is present but set1 is not
+          else if(set1Eval.isInstanceOf[SetExp] && !set2Eval.isInstanceOf[SetExp]) {
+            val s2: scala.collection.mutable.Set[BasicType] = set2Eval.asInstanceOf[scala.collection.mutable.Set[BasicType]]
+            val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+            val result: SetExp = Cross(s1, Value(s2))
+            result
+          }
+          // Both set1 and set2 values are not present
+          else {
+            val s1: SetExp = set1Eval.asInstanceOf[SetExp]
+            val s2: SetExp = set2Eval.asInstanceOf[SetExp]
+            val result: SetExp = Cross(s1, s2)
+            result
+          }
 
 
         case SetMacro(macroName, op) =>
@@ -762,22 +891,23 @@ object Computation:
               scope += (key -> temp)
               temp
           }
-          
+
           // Perform operations in the current scope
-          val stack = Stack[BasicType]()
+          val stack = mutable.Stack[BasicType]()
           op.foreach(i => {
             val output = i.eval(currentScope)
             stack.push(output)
           })
 
-          // If in a scope, there are multiple statements being executed but when an exception is thrown, 
+          // If in a scope, there are multiple statements being executed but when an exception is thrown,
           // no statement should be executed after that and only the catching of exception should be executed
           // The stack identifies the last executed statement and returns the result
-          while(stack.top.getClass.toString == "class scala.runtime.BoxedUnit") {
+          while(stack.getClass.toString == "class scala.runtime.BoxedUnit") {
             stack.pop()
           }
 
           stack.pop()
+
 
         case Field(name, expr*) =>
           val fieldMap = scope("field").asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]]
@@ -790,6 +920,7 @@ object Computation:
           else
             fieldMap += (name -> expr.head.eval(scope))
             scala.collection.mutable.Map(name -> expr.head.eval(scope))
+
 
         case Constructor(expr) =>
           if(scope.contains("constructor")) {
@@ -911,12 +1042,11 @@ object Computation:
                   // Get the name of the outer class
                   val outerClassName = nestedClassMap.find(_._2.asInstanceOf[String] == className).map(_._1) match {
                     case Some(m) => m
-                    case None => {
+                    case None =>
                       // Using our own language's Try-Catch instead of Scala's try-catch
                       ExceptionClassDef("InsufficientException", Field("InsufficientParameterReason")).eval(scope)
                       ThrowException(ExceptionClassDef("InsufficientException"), "Insufficient parameters").eval(scope)
                       CatchException(ExceptionClassDef("InsufficientException")).eval(scope)
-                    }
                   }
 
                   if(Variable("msgInsufficientException").eval(scope) == "msgInsufficientException"){
@@ -1094,6 +1224,7 @@ object Computation:
             }
           }
 
+
         case InvokeObject(className, objectName, attrName, actualParams*) =>
           // Check if we have created the class for which we want to use an object
           if(!objectMap.contains(className.eval(scope)))
@@ -1138,6 +1269,7 @@ object Computation:
             }
           }
 
+
         case Public(expr) =>
           // From eval(), we get the map at 0th index to store members with public access
           val publicMap = access(0)
@@ -1163,21 +1295,26 @@ object Computation:
           // Create a class using helper method
           createRefHelper(className, "class", scope, expr*)
 
+
         case AbstractClassDef(className, expr*) =>
           // Create an abstract class using helper method
           createRefHelper(className, "abstract_class", scope, expr*)
+
 
         case Interface(interfaceName, expr*) =>
           // Create an interface using helper method
           createRefHelper(interfaceName, "interface", scope, expr*)
 
+
         case InnerClass(outerClass, innerClass) =>
           // Create an inner class using helper method
           createInnerRefHelper(innerClass, outerClass, "innerClass", scope)
 
+
         case InnerInterface(outerInterface, innerInterface) =>
           // Create an inner interface using helper method
           createInnerRefHelper(innerInterface, outerInterface, "innerInterface", scope)
+
 
         case If(condition, thenClause, elseClause) =>
           condition.eval(scope) match {
@@ -1185,11 +1322,13 @@ object Computation:
             case _ => elseClause.eval(scope)      // If condition evaluated to false
           }
 
+
         case Then(clauses*) =>
           // Evaluate all the statements present inside 'then' clause of If-condition
           clauses.foreach(i => {
             i.eval(scope)
           })
+
 
         case Else(clauses*) =>
           // Evaluate all the statements present inside 'else' clause of If-condition
@@ -1197,13 +1336,14 @@ object Computation:
             i.eval(scope)
           })
 
+
         case ExceptionClassDef(className, excpVar*) =>
           // If an exception class already exists, return the class
           if (scope.contains(className))
             scope(className)
           else {
             // Each exception class should have 1 field
-            if(excpVar.size == 0)
+            if(excpVar.isEmpty)
               throw new Error("Exception class should have a field")
 
             // Create a map to store the values of exception class
@@ -1216,6 +1356,7 @@ object Computation:
             scope += (className -> map)
             scope(className)
           }
+
 
         case ThrowException(className, excpMsg) =>
           // Get the field map from the exception class
@@ -1238,6 +1379,7 @@ object Computation:
           f.setAccessible(true)
           f.setBoolean(instance, true)
           scope(myClass)
+
 
         case CatchException(className) =>
           // Executed only if an exception is thrown
@@ -1269,29 +1411,7 @@ object Computation:
           // Return the value of error message
           Variable("msg"+myClass).eval(scope)
 
-
-        case Map(input, tempVar, op*) =>
-          val tempScope: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map()
-
-          val key = tempVar.eval()
-          tempScope += (key -> input.eval())
-
-          op.zipWithIndex.foreach(i => {
-            if(i._2 != op.length-1) {
-              tempScope += (key -> i._1.eval(tempScope))
-            }
-          })
-
-          op.last.eval(tempScope)
-
-
-        case Multiplier(input, multiplier) =>
-          val in = input.eval(scope)
-          in.asInstanceOf[scala.collection.mutable.Set[Int]].map(BigInt(_).pow(multiplier.asInstanceOf[Int]))
       }
 
   @main def runArithExp: Unit =
     import SetExp.*
-
-    println(Map(Value(Set(1,2)), Value("x"), Union(Variable("x"), Value(Set(5,6))), Intersect(Variable("x"), Value(Set(5)))).eval())
-    println(Map(Value(Set(1,2)), Value("x"), Multiplier(Variable("x"), 5)).eval())
